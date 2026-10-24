@@ -1,12 +1,12 @@
 import AVFoundation
 import Observation
 
-/// Dictation into an editable text. Live over a batch model: the open segment is re-decoded every tick and
+/// Dictation into a read-only transcript. Live over a batch model: the open segment is re-decoded every tick and
 /// shown as its volatile tail; a pause (or the length cap) finalizes it — one last decode, committed, audio
 /// dropped — so each re-decode costs a bounded amount regardless of session length.
 ///
-/// The editor text present at start is a fixed prefix the transcript is appended to. Any user edit ends the
-/// session and drops results still in flight: the editor is the user's again.
+/// The text present at start is a fixed prefix the transcript is appended to. Clearing ends the session and
+/// drops results still in flight.
 @MainActor
 @Observable
 final class LiveDictation {
@@ -16,7 +16,7 @@ final class LiveDictation {
     }
 
     private(set) var state = State.idle
-    /// Editor content: the user's text plus this session's transcript.
+    /// Earlier sessions' transcript plus this session's.
     private(set) var text = ""
     private(set) var language: String?
     /// Smoothed input RMS, 0…1, for the level indicator.
@@ -37,13 +37,13 @@ final class LiveDictation {
         }
     }
 
-    func userEdited(_ newValue: String) {
-        text = newValue
+    func clear() {
+        text = ""
         switch state {
         case .starting, .recording:
             stop(finalize: false)
         case .idle, .failed:
-            // A finalizing stop's flush may still be pending; it must not overwrite the edit.
+            // A finalizing stop's flush may still be pending; it must not refill the cleared text.
             session = UUID()
         }
     }

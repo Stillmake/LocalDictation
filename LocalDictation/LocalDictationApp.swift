@@ -55,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.target = self
         statusItem.button?.action = #selector(showWindow)
+        let image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: "LocalDictation")
+        image?.isTemplate = true
+        statusItem.button?.image = image
         trackStatusIcon()
 
         AppViewModel.shared.showWindow()
@@ -68,11 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func trackStatusIcon() {
         withObservationTracking {
-            let state = AppViewModel.shared.service.state
-            let image = NSImage(systemSymbolName: state.symbol, accessibilityDescription: "LocalDictation")
-            image?.isTemplate = true
-            statusItem.button?.image = image
-            statusItem.button?.toolTip = "LocalDictation — \(state.title)"
+            statusItem.button?.toolTip = "LocalDictation — \(AppViewModel.shared.service.state.title)"
         } onChange: {
             Task { @MainActor in self.trackStatusIcon() }
         }
@@ -117,8 +116,12 @@ final class AppViewModel {
     func showWindow() {
         NSApp.setActivationPolicy(.regular)
         if window.isMiniaturized { window.deminiaturize(nil) }
-        NSApp.activate()
+        // Coming back from the accessory policy, `activate()` is only a cooperative request and can be refused
+        // or land before the policy switch settles, leaving the window behind the frontmost app.
+        // `orderFrontRegardless` raises it either way.
         window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp.activate()
     }
 
     /// The only path to menu-bar-only mode; a plain close (red button, ⌘W) keeps the Dock icon.
@@ -141,15 +144,6 @@ final class ASRService {
             case .loading: "Loading model…"
             case .ready: "Ready · \(Transcriber.modelName)"
             case .failed(let reason): "Failed: \(reason)"
-            }
-        }
-
-        var symbol: String {
-            switch self {
-            case .stopped: "waveform.slash"
-            case .loading: "waveform.badge.ellipsis"
-            case .ready: "waveform"
-            case .failed: "waveform.badge.exclamationmark"
             }
         }
     }

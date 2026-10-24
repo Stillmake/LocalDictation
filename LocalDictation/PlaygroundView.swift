@@ -10,19 +10,13 @@ struct PlaygroundView: View {
     var body: some View {
         Form {
             Section {
-                // The binding's setter fires only for user edits, never for dictation writes to `text`.
-                TextEditor(text: Binding(get: { dictation.text }, set: { dictation.userEdited($0) }))
-                    .font(.body)
-                    .scrollContentBackground(.hidden)
-                    .frame(minHeight: 180)
-                    .overlay(alignment: .topLeading) {
-                        if dictation.text.isEmpty {
-                            Text(isReady ? "Type, or dictate with the microphone button" : service.isRunning ? "The model is loading…" : "Start the service to dictate")
-                                .foregroundStyle(.tertiary)
-                                .padding(.leading, 5)
-                                .allowsHitTesting(false)
-                        }
-                    }
+                ScrollView {
+                    Text(dictation.text.isEmpty ? (isReady ? "Dictate with the microphone button" : service.isRunning ? "The model is loading…" : "Start the service to dictate") : dictation.text)
+                        .foregroundStyle(dictation.text.isEmpty ? .tertiary : .primary)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .frame(minHeight: 180)
                     .padding(.bottom, 32)
                     .overlay(alignment: .bottomLeading) {
                         Button {
@@ -70,7 +64,7 @@ struct PlaygroundView: View {
                     .overlay(alignment: .bottomTrailing) {
                         if !dictation.text.isEmpty {
                             Button {
-                                dictation.userEdited("")
+                                dictation.clear()
                             } label: {
                                 Image(systemName: "trash")
                                     .font(.system(size: 12, weight: .bold))
