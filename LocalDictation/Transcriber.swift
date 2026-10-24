@@ -14,10 +14,22 @@ actor Transcriber {
 
     var isReady: Bool { model != nil }
 
+    struct ModelMissing: LocalizedError {
+        let files: [String]
+        var errorDescription: String? { "Model files missing: \(files.joined(separator: ", "))" }
+        var recoverySuggestion: String? { "Run ./update-model.sh in the project folder, then rebuild." }
+    }
+
     /// Loads the model whose files the folder-synchronized group copies flat into `Contents/Resources`.
     func load() throws {
         guard model == nil else { return }
-        model = try Qwen3ASRModel.load(from: Bundle.main.resourceURL!)
+        let resources = Bundle.main.resourceURL!
+        // Name what's absent up front; otherwise a missing file surfaces as an opaque read or weight-key error.
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: resources.path(percentEncoded: false))) ?? []
+        let missing = ["config.json", "vocab.json", "merges.txt", "tokenizer_config.json"].filter { !contents.contains($0) }
+            + (contents.contains { $0.hasSuffix(".safetensors") } ? [] : ["*.safetensors"])
+        guard missing.isEmpty else { throw ModelMissing(files: missing) }
+        model = try Qwen3ASRModel.load(from: resources)
     }
 
     /// Drops the weights and returns MLX's buffer cache to the system.

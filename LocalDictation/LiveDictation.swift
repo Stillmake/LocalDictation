@@ -1,63 +1,108 @@
 import AVFoundation
 import Observation
 
-/// Live dictation over a batch model: the open segment is re-decoded every tick and shown as volatile text;
-/// a pause (or the length cap) finalizes it — one last decode, appended to the committed text, audio dropped.
-/// Segments stay short, so each re-decode costs a bounded amount regardless of session length.
+/// Dictation into an editable text. Live over a batch model: the open segment is re-decoded every tick and
+/// shown as its volatile tail; a pause (or the length cap) finalizes it — one last decode, committed, audio
+/// dropped — so each re-decode costs a bounded amount regardless of session length.
+///
+/// The editor text present at start is a fixed prefix the transcript is appended to. Any user edit ends the
+/// session and drops results still in flight: the editor is the user's again.
 @MainActor
 @Observable
 final class LiveDictation {
-    private(set) var isRecording = false
-    private(set) var committed = ""
-    private(set) var volatile = ""
+    enum State: Equatable {
+        case idle, starting, recording
+        case failed(String)
+    }
+
+    private(set) var state = State.idle
+    /// Editor content: the user's text plus this session's transcript.
+    private(set) var text = ""
     private(set) var language: String?
-    private(set) var error: String?
-    private(set) var startDate: Date?
     /// Smoothed input RMS, 0…1, for the level indicator.
     private(set) var level: Float = 0
 
     @ObservationIgnored private var microphone: Microphone?
+    /// Identifies the session allowed to write `text`; replacing it orphans every in-flight result.
+    @ObservationIgnored private var session = UUID()
+    /// The running session's loop, including its final flush after a finalizing stop.
     @ObservationIgnored private var loop: Task<Void, Never>?
 
-    var text: String { Self.join(committed, volatile) }
+    func toggle() {
+        switch state {
+        case .idle, .failed:
+            Task { await start() }
+        case .starting, .recording:
+            stop(finalize: true)
+        }
+    }
 
-    func start() async {
-        guard !isRecording, loop == nil else { return }
+    func userEdited(_ newValue: String) {
+        text = newValue
+        switch state {
+        case .starting, .recording:
+            stop(finalize: false)
+        case .idle, .failed:
+            // A finalizing stop's flush may still be pending; it must not overwrite the edit.
+            session = UUID()
+        }
+    }
+
+    /// Ends capture. Finalizing keeps the session so its loop flushes the open segment into `text`;
+    /// otherwise the session is orphaned and nothing more is written.
+    func stop(finalize: Bool) {
+        guard state == .starting || state == .recording else { return }
+        if !finalize { session = UUID() }
+        microphone?.stop()
+        microphone = nil
+        state = .idle
+    }
+
+    private func start() async {
+        let session = UUID()
+        self.session = session
+        state = .starting
+
         // Ask only while undetermined; a granted or denied decision is final until changed in System Settings.
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
             break
         case .undetermined:
-            guard await AVAudioApplication.requestRecordPermission() else { return }
+            guard await AVAudioApplication.requestRecordPermission() else {
+                if self.session == session { state = .idle }
+                return
+            }
         default:
-            error = "Microphone access is off. Turn it on in System Settings › Privacy & Security › Microphone."
+            state = .failed("Microphone access is off. Turn it on in System Settings › Privacy & Security › Microphone.")
             return
         }
+        // The previous session's final flush lands in `text` before this one captures its prefix.
+        await loop?.value
+        guard self.session == session, state == .starting else { return }
+
         let microphone = Microphone()
         do {
             try microphone.start()
         } catch {
-            self.error = error.localizedDescription
+            state = .failed(error.localizedDescription)
             return
         }
         self.microphone = microphone
-        committed = ""
-        volatile = ""
+        state = .recording
         language = nil
-        error = nil
-        startDate = .now
-        isRecording = true
+        let prefix = text
         // Snapshot for the session: every segment decodes against the same context.
         let hotwords = AppViewModel.shared.hotwords.isEmpty ? nil : AppViewModel.shared.hotwords.joined(separator: ", ")
 
         loop = Task {
             let sampleRate = Qwen3ASRModel.sampleRate
-            while true {
-                let recording = isRecording
+            var committed = ""
+            while self.session == session {
+                let recording = state == .recording
                 if recording { try? await Task.sleep(for: .milliseconds(300)) }
 
                 let segment = microphone.pending()
-                level = max(Self.rms(segment.suffix(sampleRate / 10)), level * 0.6)
+                level = recording ? max(Self.rms(segment.suffix(sampleRate / 10)), level * 0.6) : 0
                 let duration = Double(segment.count) / Double(sampleRate)
                 // 100 ms frame energies: a trailing ≥600 ms run below the floor marks a pause.
                 let frames = stride(from: 0, to: segment.count, by: sampleRate / 10).map {
@@ -71,38 +116,33 @@ final class LiveDictation {
                 if finalize && !hasSpeech {
                     // Pure silence: drop it without spending a decode.
                     microphone.discard(segment.count)
-                    volatile = ""
+                    text = Self.join(prefix, committed)
                 } else if hasSpeech && (duration >= 0.5 || !recording) {
                     do {
                         let output = try await AppViewModel.shared.service.transcribe(
                             segment, language: nil, hotwords: hotwords
                         )
-                        if output.language != nil { self.language = output.language }
+                        guard self.session == session else { break }
+                        if output.language != nil { language = output.language }
                         if finalize {
                             committed = Self.join(committed, output.text)
-                            volatile = ""
                             microphone.discard(segment.count)
+                            text = Self.join(prefix, committed)
                         } else {
-                            volatile = output.text
+                            text = Self.join(prefix, Self.join(committed, output.text))
                         }
                     } catch {
-                        self.error = error.localizedDescription
-                        stop()
+                        guard self.session == session else { break }
+                        microphone.stop()
+                        self.microphone = nil
+                        state = .failed(error.localizedDescription)
+                        break
                     }
                 }
                 if !recording { break }
             }
-            self.microphone = nil
             level = 0
-            loop = nil
         }
-    }
-
-    /// Stops capture; the loop runs one final decode over the open segment and then exits.
-    func stop() {
-        guard isRecording else { return }
-        isRecording = false
-        microphone?.stop()
     }
 
     private nonisolated static func rms(_ samples: some Collection<Float>) -> Float {

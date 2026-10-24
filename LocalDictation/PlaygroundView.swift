@@ -10,67 +10,80 @@ struct PlaygroundView: View {
     var body: some View {
         Form {
             Section {
-                VStack(spacing: 10) {
-                    Button {
-                        if dictation.isRecording {
-                            dictation.stop()
-                        } else {
-                            Task {
-                                await dictation.start()
-                            }
+                // The binding's setter fires only for user edits, never for dictation writes to `text`.
+                TextEditor(text: Binding(get: { dictation.text }, set: { dictation.userEdited($0) }))
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 180)
+                    .overlay(alignment: .topLeading) {
+                        if dictation.text.isEmpty {
+                            Text(isReady ? "Type, or dictate with the microphone button" : service.isRunning ? "The model is loading…" : "Start the service to dictate")
+                                .foregroundStyle(.tertiary)
+                                .padding(.leading, 5)
+                                .allowsHitTesting(false)
                         }
-                    } label: {
-                        Image(systemName: dictation.isRecording ? "stop.fill" : "mic.fill")
-                            .font(.system(size: 26, weight: .semibold))
-                            .contentTransition(.symbolEffect(.replace))
-                            .frame(width: 64, height: 64)
-                            .foregroundStyle(.white)
-                            .background(dictation.isRecording ? Color.red : Color.accentColor, in: .circle)
-                            .overlay {
-                                // Input level ring: grows with the smoothed RMS while recording.
-                                Circle()
-                                    .stroke(Color.red.opacity(0.35), lineWidth: 6)
-                                    .scaleEffect(reduceMotion ? 1 : 1 + CGFloat(min(dictation.level * 8, 1)) * 0.35)
-                                    .opacity(dictation.isRecording ? 1 : 0)
-                                    .animation(.easeOut(duration: 0.25), value: dictation.level)
+                    }
+                    .padding(.bottom, 32)
+                    .overlay(alignment: .bottomLeading) {
+                        Button {
+                            dictation.toggle()
+                        } label: {
+                            Group {
+                                switch dictation.state {
+                                case .idle:
+                                    Image(systemName: "mic")
+                                        .font(.system(size: 12, weight: .bold))
+                                case .starting:
+                                    ProgressView().controlSize(.mini)
+                                case .recording:
+                                    RoundedRectangle(cornerRadius: 2).fill(.white).frame(width: 10, height: 10)
+                                case .failed:
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundStyle(.orange)
+                                }
                             }
+                            .frame(width: 24, height: 24)
+                            .background {
+                                ZStack {
+                                    Circle().fill(Color(nsColor: .labelColor).opacity(0.2))
+                                    if dictation.state == .recording {
+                                        // Swells with the input level.
+                                        Circle().fill(.red)
+                                            .scaleEffect(reduceMotion ? 1 : 1 + 0.2 * CGFloat(min(dictation.level * 8, 1)))
+                                    }
+                                }
+                            }
+                            .animation(.default, value: dictation.state)
+                            .animation(.default, value: dictation.level)
+                        }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut("r", modifiers: .command)
+                        // Stopping stays possible even if the model went away mid-session.
+                        .disabled(!isReady && dictation.state != .starting && dictation.state != .recording)
+                        .help({
+                            if case .failed(let message) = dictation.state { return message }
+                            return dictation.state == .recording ? "Stop Dictation (⌘R)" : "Dictate (⌘R)"
+                        }())
+                        .accessibilityLabel(dictation.state == .recording ? "Stop Dictation" : "Dictate")
                     }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut("r", modifiers: .command)
-                    .disabled(!isReady && !dictation.isRecording)
-                    .help(dictation.isRecording ? "Stop Dictation (⌘R)" : "Start Dictation (⌘R)")
-                    .accessibilityLabel(dictation.isRecording ? "Stop Dictation" : "Start Dictation")
-
-                    if let startDate = dictation.startDate, dictation.isRecording {
-                        Text(startDate, style: .timer)
-                            .font(.callout.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(isReady ? "Press to dictate" : service.isRunning ? "The model is loading…" : "Start the service to dictate")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                    .overlay(alignment: .bottomTrailing) {
+                        if !dictation.text.isEmpty {
+                            Button {
+                                dictation.userEdited("")
+                            } label: {
+                                Image(systemName: "trash")
+                                    .font(.system(size: 12, weight: .bold))
+                                    .frame(width: 24, height: 24)
+                                    .background(Color(nsColor: .labelColor).opacity(0.2), in: .circle)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Clear")
+                            .accessibilityLabel("Clear")
+                            .transition(.blurReplace)
+                        }
                     }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 12)
-
-                Group {
-                    if let error = dictation.error {
-                        Label(error, systemImage: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.red)
-                    } else if dictation.text.isEmpty {
-                        Text(dictation.isRecording ? "Listening…" : "The transcript appears here as you speak.")
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                    } else {
-                        // Committed text is final; the volatile tail is the open segment's latest hypothesis.
-                        Text("\(dictation.committed)\(Text(dictation.text.dropFirst(dictation.committed.count)).foregroundStyle(.secondary))")
-                            .lineSpacing(3)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-                }
-                .textSelection(.enabled)
-                .frame(minHeight: 120, alignment: .top)
+                    .animation(.default, value: dictation.text.isEmpty)
             } header: {
                 HStack {
                     Text("Dictation")
@@ -101,7 +114,7 @@ struct PlaygroundView: View {
                 }
                 .sheet(isPresented: $isEditingHotwords) { HotwordsSheet() }
             }
-            .disabled(dictation.isRecording)
+            .disabled(dictation.state == .starting || dictation.state == .recording)
 
             Section {
                 LabeledContent("Endpoint") {
@@ -139,7 +152,7 @@ struct PlaygroundView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if service.isRunning {
                     Button("Stop Service", systemImage: "stop.fill") {
-                        dictation.stop()
+                        dictation.stop(finalize: false)
                         service.stop()
                     }
                     .help("Stop the service and free the model's memory")

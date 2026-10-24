@@ -190,6 +190,14 @@ final class ASRService {
             } catch {
                 guard !Task.isCancelled else { return }
                 state = .failed(error.localizedDescription)
+                if let missing = error as? Transcriber.ModelMissing {
+                    // A build without the model can never work; say so instead of leaving only a status line.
+                    let alert = NSAlert()
+                    alert.alertStyle = .critical
+                    alert.messageText = missing.errorDescription!
+                    alert.informativeText = missing.recoverySuggestion!
+                    alert.runModal()
+                }
             }
         }
     }
