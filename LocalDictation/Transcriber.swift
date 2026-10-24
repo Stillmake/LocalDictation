@@ -9,10 +9,6 @@ actor Transcriber {
     }
 
     private var model: Qwen3ASRModel?
-    /// The loaded model folder's name, reported by `/health` and `/v1/models`.
-    private(set) var modelName: String?
-
-    var isReady: Bool { model != nil }
 
     struct ModelMissing: LocalizedError {
         let files: [String]
@@ -33,13 +29,11 @@ actor Transcriber {
         guard model == nil else { return }
         try Self.validate(folder)
         model = try Qwen3ASRModel.load(from: folder)
-        modelName = folder.lastPathComponent
     }
 
     /// Drops the weights and returns MLX's buffer cache to the system.
     func unload() {
         model = nil
-        modelName = nil
         Memory.clearCache()
     }
 

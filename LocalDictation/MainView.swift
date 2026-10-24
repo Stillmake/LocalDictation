@@ -25,7 +25,7 @@ struct MainView: View {
             Form {
                 Section {
                     ScrollView {
-                        Text(dictation.text.isEmpty ? (isReady ? "Dictate with the microphone button" : service.isRunning ? "The model is loading…" : "Start the service to dictate") : dictation.text)
+                        Text(dictation.text.isEmpty ? (service.isRunning ? "Dictate with the microphone button" : "Start the service to dictate") : dictation.text)
                             .foregroundStyle(dictation.text.isEmpty ? .tertiary : .primary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -67,7 +67,7 @@ struct MainView: View {
                         }
                         .buttonStyle(.plain)
                         // Stopping stays possible even if the model went away mid-session.
-                        .disabled(!isReady && dictation.state != .starting && dictation.state != .recording)
+                        .disabled(!service.isRunning && dictation.state != .starting && dictation.state != .recording)
                         .help({
                             if case .failed(let message) = dictation.state { return message }
                             return dictation.state == .recording ? "Stop Dictation" : "Dictate"
@@ -178,7 +178,7 @@ struct MainView: View {
                         .help("Stop the service and free the model's memory")
                     } else {
                         Button("Start Service", systemImage: "play.fill") { service.start() }
-                            .help("Load the model and start the endpoint")
+                            .help("Start the endpoint; the model loads on the first request")
                     }
                     Button("Quit", systemImage: "power") { NSApplication.shared.terminate(nil) }
                         .help("Quit LocalDictation")
@@ -194,9 +194,5 @@ struct MainView: View {
         } catch {
             NSAlert(error: error).runModal()
         }
-    }
-
-    private var isReady: Bool {
-        if case .ready = service.state { true } else { false }
     }
 }

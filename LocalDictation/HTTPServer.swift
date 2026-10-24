@@ -6,13 +6,13 @@ import Network
 final class HTTPServer: Sendable {
     private let listener: NWListener
 
-    init(port: UInt16, transcriber: Transcriber) throws {
+    init(port: UInt16, service: ASRService) throws {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
         listener = try NWListener(using: parameters)
         listener.newConnectionHandler = { connection in
             connection.start(queue: .global(qos: .userInitiated))
-            Task { await Self.serve(connection, transcriber: transcriber) }
+            Task { await Self.serve(connection, service: service) }
         }
         listener.start(queue: .global(qos: .userInitiated))
     }
@@ -36,14 +36,15 @@ final class HTTPServer: Sendable {
         }
 
         static func error(_ message: String, status: Int) -> Response {
-            .json(["error": ["message": message]], status: status)
+            // OpenAI's error shape: client faults are `invalid_request_error`, ours are `server_error`.
+            .json(["error": ["message": message, "type": status < 500 ? "invalid_request_error" : "server_error"]], status: status)
         }
     }
 
-    private static func serve(_ connection: NWConnection, transcriber: Transcriber) async {
+    private static func serve(_ connection: NWConnection, service: ASRService) async {
         let response: Response
         do {
-            response = try await route(try await read(connection), transcriber: transcriber)
+            response = try await route(try await read(connection), service: service)
         } catch {
             response = .error(error.localizedDescription, status: 400)
         }
@@ -57,17 +58,18 @@ final class HTTPServer: Sendable {
         })
     }
 
-    private static func route(_ request: Request, transcriber: Transcriber) async throws -> Response {
+    private static func route(_ request: Request, service: ASRService) async throws -> Response {
         switch (request.method, request.path) {
         case ("GET", "/health"):
-            return if let name = await transcriber.modelName {
+            // Standby counts as healthy: the next transcription loads the model.
+            return if let name = await service.modelName {
                 .json(["status": "ready", "model": name])
             } else {
-                .json(["status": "loading"], status: 503)
+                .json(["status": "unavailable"], status: 503)
             }
 
         case ("GET", "/v1/models"):
-            let data = await transcriber.modelName.map { [["id": $0, "object": "model", "owned_by": "local"]] } ?? []
+            let data = await service.modelName.map { [["id": $0, "object": "model", "owned_by": "local"]] } ?? []
             return .json(["object": "list", "data": data])
 
         case ("POST", "/v1/audio/transcriptions"):
@@ -95,14 +97,16 @@ final class HTTPServer: Sendable {
 
             let output: Qwen3ASRModel.Output
             do {
-                output = try await transcriber.transcribe(
+                output = try await service.transcribe(
                     audioURL,
                     language: field("language"),
                     // OpenAI's `prompt` field carries comma-separated hotwords, e.g. "Kubernetes, SwiftUI, 张三".
                     hotwords: field("prompt")
                 )
             } catch is Transcriber.NotReady {
-                return .error("model is still loading", status: 503)
+                return .error("service is stopped", status: 503)
+            } catch let error as ASRService.LoadFailed {
+                return .error(error.localizedDescription, status: 500)
             }
 
             switch format {

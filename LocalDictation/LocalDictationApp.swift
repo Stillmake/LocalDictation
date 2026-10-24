@@ -148,17 +148,26 @@ final class AppViewModel {
 final class ASRService {
     enum State {
         case stopped, loading
+        /// Listening with the model not yet loaded; the first transcription loads it.
+        case standby(String)
         case ready(String)
         case failed(String)
 
         var title: String {
             switch self {
             case .stopped: "Stopped"
+            case .standby(let model): "Standby · \(model)"
             case .loading: "Loading model…"
             case .ready(let model): "Ready · \(model)"
             case .failed(let reason): "Failed: \(reason)"
             }
         }
+    }
+
+    /// A server-side fault, so the endpoint answers 500 rather than blaming the request.
+    struct LoadFailed: LocalizedError {
+        let underlying: any Error
+        var errorDescription: String? { "model failed to load: \(underlying.localizedDescription)" }
     }
 
     private(set) var state = State.stopped
@@ -168,8 +177,10 @@ final class ASRService {
     private let port: UInt16 = 8765
     private let transcriber = Transcriber()
     private var server: HTTPServer?
-    private var loading: Task<Void, Never>?
+    private var loading: Task<Void, any Error>?
     private var unloading: Task<Void, Never>?
+    /// Fires after 30 idle minutes to free the model; every transcription re-arms it.
+    private var idleRelease: Task<Void, Never>?
 
     var isRunning: Bool {
         if case .stopped = state { false } else if case .failed = state { false } else { true }
@@ -198,56 +209,104 @@ final class ASRService {
     }
     #endif
 
-    /// Binds the HTTP listener and loads the model.
+    /// Binds the HTTP listener; the model loads on the first transcription.
     func start() {
         guard let modelFolder else {
             state = .failed("choose a model folder")
             return
         }
         do {
-            server = try server ?? HTTPServer(port: port, transcriber: transcriber)
+            server = try server ?? HTTPServer(port: port, service: self)
         } catch {
             state = .failed("port \(port): \(error.localizedDescription)")
             return
         }
-        state = .loading
-        loading = Task { [unloading, transcriber] in
-            // Load → unload → load stays ordered: wait for any pending unload from a prior stop.
-            await unloading?.value
-            do {
-                try await transcriber.load(from: modelFolder)
-                guard !Task.isCancelled else { return }
-                state = .ready(modelFolder.lastPathComponent)
-            } catch {
-                guard !Task.isCancelled else { return }
-                state = .failed(error.localizedDescription)
-                if let missing = error as? Transcriber.ModelMissing {
-                    // The saved folder changed since it was picked; say so instead of leaving only a status line.
-                    let alert = NSAlert()
-                    alert.alertStyle = .critical
-                    alert.messageText = missing.errorDescription!
-                    alert.informativeText = missing.recoverySuggestion!
-                    alert.runModal()
-                }
-            }
-        }
+        state = .standby(modelFolder.lastPathComponent)
     }
 
     /// Releases the port and the model's memory.
     func stop() {
-        let pending = loading
-        pending?.cancel()
-        loading = nil
         server = nil
         state = .stopped
-        // Unload only after an in-flight load settles, so it cannot resurrect the weights.
-        unloading = Task { [transcriber] in
-            await pending?.value
-            await transcriber.unload()
+        unload()
+    }
+
+    /// The served model's name, known before it loads, so clients can list it while on standby.
+    var modelName: String? {
+        switch state {
+        case .standby(let name), .ready(let name): name
+        case .loading: modelFolder?.lastPathComponent
+        case .stopped, .failed: nil
         }
     }
 
     func transcribe(_ samples: [Float], language: String?, hotwords: String?) async throws -> Qwen3ASRModel.Output {
-        try await transcriber.transcribe(samples, language: language, hotwords: hotwords)
+        try await prepare()
+        defer { armIdleRelease() }
+        return try await transcriber.transcribe(samples, language: language, hotwords: hotwords)
+    }
+
+    func transcribe(_ audioURL: URL, language: String?, hotwords: String?) async throws -> Qwen3ASRModel.Output {
+        try await prepare()
+        defer { armIdleRelease() }
+        return try await transcriber.transcribe(audioURL, language: language, hotwords: hotwords)
+    }
+
+    /// Loads the model if needed; concurrent callers share one load. Disarms the idle release, so it cannot
+    /// unload between here and the transcription.
+    private func prepare() async throws {
+        idleRelease?.cancel()
+        if case .ready = state { return }
+        if loading == nil {
+            guard server != nil, let modelFolder else { throw Transcriber.NotReady() }
+            state = .loading
+            loading = Task { [unloading, transcriber] in
+                // Load → unload → load stays ordered: wait for any pending unload from a prior release.
+                await unloading?.value
+                do {
+                    try await transcriber.load(from: modelFolder)
+                    try Task.checkCancellation()
+                    state = .ready(modelFolder.lastPathComponent)
+                } catch {
+                    guard !Task.isCancelled else { throw error }
+                    state = .failed(error.localizedDescription)
+                    // A later Start retries instead of replaying this failure.
+                    loading = nil
+                    if let missing = error as? Transcriber.ModelMissing {
+                        // The saved folder changed since it was picked; say so instead of leaving only a status line.
+                        let alert = NSAlert()
+                        alert.alertStyle = .critical
+                        alert.messageText = missing.errorDescription!
+                        alert.informativeText = missing.recoverySuggestion!
+                        alert.runModal()
+                    }
+                    throw LoadFailed(underlying: error)
+                }
+            }
+        }
+        try await loading!.value
+    }
+
+    private func armIdleRelease() {
+        idleRelease?.cancel()
+        idleRelease = Task {
+            try? await Task.sleep(for: .seconds(30 * 60))
+            guard !Task.isCancelled, case .ready(let name) = state else { return }
+            unload()
+            state = .standby(name)
+        }
+    }
+
+    /// Frees the model's memory, keeping the port.
+    private func unload() {
+        idleRelease?.cancel()
+        let pending = loading
+        pending?.cancel()
+        loading = nil
+        // Unload only after an in-flight load settles, so it cannot resurrect the weights.
+        unloading = Task { [transcriber] in
+            _ = try? await pending?.value
+            await transcriber.unload()
+        }
     }
 }
