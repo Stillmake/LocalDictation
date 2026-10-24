@@ -60,12 +60,15 @@ final class HTTPServer: Sendable {
     private static func route(_ request: Request, transcriber: Transcriber) async throws -> Response {
         switch (request.method, request.path) {
         case ("GET", "/health"):
-            return await transcriber.isReady
-                ? .json(["status": "ready", "model": Transcriber.modelName])
-                : .json(["status": "loading", "model": Transcriber.modelName], status: 503)
+            return if let name = await transcriber.modelName {
+                .json(["status": "ready", "model": name])
+            } else {
+                .json(["status": "loading"], status: 503)
+            }
 
         case ("GET", "/v1/models"):
-            return .json(["object": "list", "data": [["id": Transcriber.modelName, "object": "model", "owned_by": "local"]]])
+            let data = await transcriber.modelName.map { [["id": $0, "object": "model", "owned_by": "local"]] } ?? []
+            return .json(["object": "list", "data": data])
 
         case ("POST", "/v1/audio/transcriptions"):
             guard let contentType = request.headers["content-type"],

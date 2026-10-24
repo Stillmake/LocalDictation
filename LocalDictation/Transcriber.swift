@@ -8,33 +8,38 @@ actor Transcriber {
         var errorDescription: String? { "model is not loaded yet" }
     }
 
-    static let modelName = "Qwen3-ASR-0.6B-8bit"
-
     private var model: Qwen3ASRModel?
+    /// The loaded model folder's name, reported by `/health` and `/v1/models`.
+    private(set) var modelName: String?
 
     var isReady: Bool { model != nil }
 
     struct ModelMissing: LocalizedError {
         let files: [String]
         var errorDescription: String? { "Model files missing: \(files.joined(separator: ", "))" }
-        var recoverySuggestion: String? { "Run ./update-model.sh in the project folder, then rebuild." }
+        var recoverySuggestion: String? { "Choose a folder holding a Qwen3-ASR MLX model." }
     }
 
-    /// Loads the model whose files the folder-synchronized group copies flat into `Contents/Resources`.
-    func load() throws {
-        guard model == nil else { return }
-        let resources = Bundle.main.resourceURL!
-        // Name what's absent up front; otherwise a missing file surfaces as an opaque read or weight-key error.
-        let contents = (try? FileManager.default.contentsOfDirectory(atPath: resources.path(percentEncoded: false))) ?? []
+    /// Checks `folder` holds every file `Qwen3ASRModel.load` reads, naming what's absent up front;
+    /// otherwise a missing file surfaces as an opaque read or weight-key error.
+    nonisolated static func validate(_ folder: URL) throws {
+        let contents = (try? FileManager.default.contentsOfDirectory(atPath: folder.path(percentEncoded: false))) ?? []
         let missing = ["config.json", "vocab.json", "merges.txt", "tokenizer_config.json"].filter { !contents.contains($0) }
             + (contents.contains { $0.hasSuffix(".safetensors") } ? [] : ["*.safetensors"])
         guard missing.isEmpty else { throw ModelMissing(files: missing) }
-        model = try Qwen3ASRModel.load(from: resources)
+    }
+
+    func load(from folder: URL) throws {
+        guard model == nil else { return }
+        try Self.validate(folder)
+        model = try Qwen3ASRModel.load(from: folder)
+        modelName = folder.lastPathComponent
     }
 
     /// Drops the weights and returns MLX's buffer cache to the system.
     func unload() {
         model = nil
+        modelName = nil
         Memory.clearCache()
     }
 

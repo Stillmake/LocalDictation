@@ -1,17 +1,16 @@
 #!/bin/zsh
-# Replaces the bundled model with a Hugging Face MLX repo, downloaded with aria2c.
+# Downloads a Hugging Face MLX repo into the project root with aria2c; pick that folder in the app.
 #
 #   ./update-model.sh                                      # mlx-community/Qwen3-ASR-0.6B-8bit
 #   ./update-model.sh mlx-community/Qwen3-ASR-0.6B-4bit
 #
-# Fetches only what Qwen3ASRModel.load reads, verifies every size against the Hub, and swaps the folder
-# in only on success. The model folder sits inside the synchronized `LocalDictation` group, so Xcode
-# copies its files flat into Contents/Resources with no project edit.
+# Fetches only what Qwen3ASRModel.load reads, verifies every size against the Hub, and moves the folder
+# in only on success.
 set -euo pipefail
 
 repo=${1:-mlx-community/Qwen3-ASR-0.6B-8bit}
 root=${0:A:h}
-target="$root/LocalDictation/${repo:t}"
+target="$root/${repo:t}"
 staging="$root/.model-staging"
 
 command -v aria2c >/dev/null || { print -u2 "aria2c not found: brew install aria2"; exit 1; }
@@ -42,12 +41,7 @@ print -r -- "$manifest" | while IFS=$'\t' read -r file size; do
         || { print -u2 "$file: $actual of $size bytes; rerun to resume"; exit 1; }
 done
 
-# Remove every previously bundled model folder (anything holding a config.json), then move the new one in.
-for old in "$root"/LocalDictation/*/config.json(N); do
-    rm -rf "${old:h}"
-done
+rm -rf "$target"
 mv "$staging" "$target"
 
 print "Installed $repo → ${target#$root/}"
-[[ ${repo:t} == Qwen3-ASR-0.6B-8bit ]] \
-    || print "Update Transcriber.modelName to \"${repo:t}\" so the UI and /v1/models report it."

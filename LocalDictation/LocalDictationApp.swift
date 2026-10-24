@@ -55,9 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.target = self
         statusItem.button?.action = #selector(showWindow)
-        let image = NSImage(systemSymbolName: "server.rack", accessibilityDescription: "LocalDictation")
-        image?.isTemplate = true
-        statusItem.button?.image = image
+        statusItem.button?.image = NSImage(named: "menubar.icon")
         trackStatusIcon()
 
         AppViewModel.shared.showWindow()
@@ -97,17 +95,20 @@ final class AppViewModel {
     }
 
     @ObservationIgnored private lazy var window: NSWindow = {
-        let hosting = NSHostingController(rootView: PlaygroundView())
+        let hosting = NSHostingController(rootView: MainView())
         // Bridge SwiftUI's navigationTitle/Subtitle and toolbar into the AppKit window.
         hosting.sceneBridgingOptions = [.title, .toolbars]
+        // The window owns its fixed size: otherwise SwiftUI's fitting size resizes it, and the small "No Model"
+        // screen shrinks it.
+        hosting.sizingOptions = []
         let window = NSWindow(contentViewController: hosting)
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
         window.toolbarStyle = .unified
-        window.setContentSize(NSSize(width: 520, height: 640))
-        window.contentMinSize = NSSize(width: 460, height: 520)
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("PlaygroundWindow")
         if !window.setFrameUsingName("PlaygroundWindow") { window.center() }
+        // After restoring, so only the saved position survives; a size saved while resizable is overridden.
+        window.setContentSize(NSSize(width: 560, height:520))
         return window
     }()
 
@@ -135,20 +136,23 @@ final class AppViewModel {
 @Observable
 final class ASRService {
     enum State {
-        case stopped, loading, ready
+        case stopped, loading
+        case ready(String)
         case failed(String)
 
         var title: String {
             switch self {
             case .stopped: "Stopped"
             case .loading: "Loading model…"
-            case .ready: "Ready · \(Transcriber.modelName)"
+            case .ready(let model): "Ready · \(model)"
             case .failed(let reason): "Failed: \(reason)"
             }
         }
     }
 
     private(set) var state = State.stopped
+    /// The validated model folder, persisted by path; `nil` until the user picks one.
+    private(set) var modelFolder = UserDefaults.standard.string(forKey: "modelFolder").map { URL(filePath: $0, directoryHint: .isDirectory) }
     let endpoint: URL
     private let port: UInt16 = 8765
     private let transcriber = Transcriber()
@@ -165,8 +169,30 @@ final class ASRService {
         start()
     }
 
+    /// Validates `folder` before adopting it, so a bad pick never replaces a working model; reloads if running.
+    func useModelFolder(_ folder: URL) throws {
+        try Transcriber.validate(folder)
+        modelFolder = folder
+        UserDefaults.standard.set(folder.path(percentEncoded: false), forKey: "modelFolder")
+        if isRunning { stop() }
+        start()
+    }
+
+    #if DEBUG
+    /// Forgets the saved folder and unloads the model, returning to the "No Model" screen.
+    func clearModelFolder() {
+        stop()
+        modelFolder = nil
+        UserDefaults.standard.removeObject(forKey: "modelFolder")
+    }
+    #endif
+
     /// Binds the HTTP listener and loads the model.
     func start() {
+        guard let modelFolder else {
+            state = .failed("choose a model folder")
+            return
+        }
         do {
             server = try server ?? HTTPServer(port: port, transcriber: transcriber)
         } catch {
@@ -178,14 +204,14 @@ final class ASRService {
             // Load → unload → load stays ordered: wait for any pending unload from a prior stop.
             await unloading?.value
             do {
-                try await transcriber.load()
+                try await transcriber.load(from: modelFolder)
                 guard !Task.isCancelled else { return }
-                state = .ready
+                state = .ready(modelFolder.lastPathComponent)
             } catch {
                 guard !Task.isCancelled else { return }
                 state = .failed(error.localizedDescription)
                 if let missing = error as? Transcriber.ModelMissing {
-                    // A build without the model can never work; say so instead of leaving only a status line.
+                    // The saved folder changed since it was picked; say so instead of leaving only a status line.
                     let alert = NSAlert()
                     alert.alertStyle = .critical
                     alert.messageText = missing.errorDescription!

@@ -54,7 +54,7 @@ struct HotwordsSheet: View {
             }
             .padding()
         }
-        .frame(width: 380, height: 440)
+        .frame(width: 380, height: 420)
     }
 
     /// Accepts several terms at once (comma or newline separated); skips case-insensitive duplicates.
