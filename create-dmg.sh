@@ -246,11 +246,7 @@ fi
 echo "${YELLOW}Signing identity:${RESET} $SIGNING_IDENTITY"
 
 AUTH_STATUS="$(asc auth status --output json 2>/dev/null || true)"
-if [[ -z "${ASC_PROFILE:-}" ]]; then
-  PROFILES=("${(@f)$(printf '%s' "$AUTH_STATUS" | jq -r '.credentials[].name')}")
-  [[ "${#PROFILES[@]}" -gt 0 ]] || die "no asc credentials found. Run 'asc auth' first."
-  ASC_PROFILE="$(pick 'Select an asc credential profile for notarization:' "${PROFILES[@]}")"
-fi
+ASC_PROFILE="${ASC_PROFILE:-sm}"
 echo "${YELLOW}Notarization profile:${RESET} $ASC_PROFILE"
 
 # Bypass the keychain only when the chosen profile is not stored in it

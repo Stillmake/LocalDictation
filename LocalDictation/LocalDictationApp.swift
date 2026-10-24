@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import ServiceManagement
 import SwiftUI
 
 /// AppKit lifecycle: the delegate owns the menu bar, window and status item; SwiftUI only renders content.
@@ -49,7 +50,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(named: "menubar.icon")
         trackStatusIcon()
 
-        AppViewModel.shared.showWindow()
+        // A login-item launch starts in the menu bar; the Apple event is only current during launch.
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        if event?.eventID == kAEOpenApplication, event?.paramDescriptor(forKeyword: keyAELaunchedAsLogInItem)?.typeCodeValue == keyAELaunchedAsLogInItem {
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            AppViewModel.shared.showWindow()
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -83,6 +90,19 @@ final class AppViewModel {
     /// Terms that bias recognition, sent as the model's context. Persisted on every change.
     var hotwords = UserDefaults.standard.stringArray(forKey: "hotwords") ?? [] {
         didSet { UserDefaults.standard.set(hotwords, forKey: "hotwords") }
+    }
+
+    /// Mirrors the login item's registration; a launch at login starts hidden in the menu bar.
+    var launchAtLogin = SMAppService.mainApp.status == .enabled {
+        didSet {
+            do {
+                try launchAtLogin ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+            let enabled = SMAppService.mainApp.status == .enabled
+            if launchAtLogin != enabled { launchAtLogin = enabled }
+        }
     }
 
     @ObservationIgnored private lazy var window: NSWindow = {

@@ -30,7 +30,7 @@ struct MainView: View {
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                    .frame(height: 120)
+                    .frame(height: 72)
                     .padding(.bottom, 32)
                     .overlay(alignment: .bottomLeading) {
                         Button {
@@ -118,6 +118,8 @@ struct MainView: View {
                         }
                     }
                     .sheet(isPresented: $isEditingHotwords) { HotwordsSheet() }
+                    Toggle("Launch at Login", isOn: Bindable(AppViewModel.shared).launchAtLogin)
+                        .help("Start LocalDictation hidden in the menu bar when you log in")
                 }
                 .disabled(dictation.state == .starting || dictation.state == .recording)
 
