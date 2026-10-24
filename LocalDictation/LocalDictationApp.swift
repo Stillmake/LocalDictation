@@ -67,7 +67,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func trackStatusIcon() {
         withObservationTracking {
-            statusItem.button?.toolTip = "LocalDictation — \(AppViewModel.shared.service.state.title)"
+            let state = AppViewModel.shared.service.state
+            statusItem.button?.toolTip = "LocalDictation — \(state.title)"
+            // A failed load is reported from a background request; tint rather than raise the window and steal focus.
+            statusItem.button?.contentTintColor = if case .failed = state { .systemRed } else { nil }
         } onChange: {
             Task { @MainActor in self.trackStatusIcon() }
         }
@@ -171,6 +174,8 @@ final class ASRService {
     }
 
     private(set) var state = State.stopped
+    /// Set when the saved folder lost model files; the window presents it and clears it on dismissal.
+    var missingModel: Transcriber.ModelMissing?
     /// The validated model folder, persisted by path; `nil` until the user picks one.
     private(set) var modelFolder = UserDefaults.standard.string(forKey: "modelFolder").map { URL(filePath: $0, directoryHint: .isDirectory) }
     let endpoint: URL
@@ -265,21 +270,17 @@ final class ASRService {
                 await unloading?.value
                 do {
                     try await transcriber.load(from: modelFolder)
-                    try Task.checkCancellation()
+                    guard !Task.isCancelled else { throw Transcriber.NotReady() }
                     state = .ready(modelFolder.lastPathComponent)
                 } catch {
-                    guard !Task.isCancelled else { throw error }
-                    state = .failed(error.localizedDescription)
-                    // A later Start retries instead of replaying this failure.
+                    // Stopped mid-load: waiters get the stopped-service answer, not the cancellation.
+                    guard !Task.isCancelled else { throw Transcriber.NotReady() }
+                    // Release the port too, matching the Start button the failed state shows; Start retries.
+                    server = nil
                     loading = nil
-                    if let missing = error as? Transcriber.ModelMissing {
-                        // The saved folder changed since it was picked; say so instead of leaving only a status line.
-                        let alert = NSAlert()
-                        alert.alertStyle = .critical
-                        alert.messageText = missing.errorDescription!
-                        alert.informativeText = missing.recoverySuggestion!
-                        alert.runModal()
-                    }
+                    state = .failed(error.localizedDescription)
+                    // The saved folder changed since it was picked; the window says so without blocking this request.
+                    missingModel = error as? Transcriber.ModelMissing
                     throw LoadFailed(underlying: error)
                 }
             }

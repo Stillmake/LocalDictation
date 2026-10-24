@@ -143,6 +143,14 @@ struct MainView: View {
                 }
             }
             .formStyle(.grouped)
+            .alert(
+                service.missingModel?.errorDescription ?? "",
+                isPresented: Binding { service.missingModel != nil } set: { if !$0 { service.missingModel = nil } },
+                presenting: service.missingModel
+            ) { _ in
+            } message: { missing in
+                Text(missing.recoverySuggestion!)
+            }
             .safeAreaBar(edge: .bottom) {
                 HStack {
                     Button("Replace Model Folder…", systemImage: "folder") { isChoosingModel = true }
