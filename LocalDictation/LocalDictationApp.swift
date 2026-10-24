@@ -115,8 +115,10 @@ final class AppViewModel {
         // The window owns its fixed size: otherwise SwiftUI's fitting size resizes it, and the small "No Model"
         // screen shrinks it.
         hosting.sizingOptions = []
-        let window = NSWindow(contentViewController: hosting)
-        window.styleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
+        // Not `init(contentViewController:)`: it binds the window title to the controller's nil `title`, which
+        // overwrites the bridged navigationTitle until the next SwiftUI update.
+        let window = NSWindow(contentRect: .zero, styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.contentViewController = hosting
         window.toolbarStyle = .unified
         window.isReleasedWhenClosed = false
         window.setFrameAutosaveName("PlaygroundWindow")
