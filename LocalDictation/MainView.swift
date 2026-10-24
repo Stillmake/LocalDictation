@@ -17,8 +17,9 @@ struct MainView: View {
             } actions: {
                 Button("Choose Model Folder…") { isChoosingModel = true }
             }
-            .toolbar { title }
-            .toolbar(removing: .title)
+            .fileImporter(isPresented: $isChoosingModel, allowedContentTypes: [.folder], onCompletion: useModelFolder)
+            .navigationTitle("LocalDictation")
+            .navigationSubtitle(service.state.title)
             .buttonBorderShape(.capsule)
         } else {
             Form {
@@ -65,12 +66,11 @@ struct MainView: View {
                             .animation(.default, value: dictation.level)
                         }
                         .buttonStyle(.plain)
-                        .keyboardShortcut("r", modifiers: .command)
                         // Stopping stays possible even if the model went away mid-session.
                         .disabled(!isReady && dictation.state != .starting && dictation.state != .recording)
                         .help({
                             if case .failed(let message) = dictation.state { return message }
-                            return dictation.state == .recording ? "Stop Dictation (⌘R)" : "Dictate (⌘R)"
+                            return dictation.state == .recording ? "Stop Dictation" : "Dictate"
                         }())
                         .accessibilityLabel(dictation.state == .recording ? "Stop Dictation" : "Dictate")
                     }
@@ -85,7 +85,6 @@ struct MainView: View {
                                     .background(Color(nsColor: .labelColor).opacity(0.2), in: .circle)
                             }
                             .buttonStyle(.plain)
-                            .help("Clear")
                             .accessibilityLabel("Clear")
                             .transition(.blurReplace)
                         }
@@ -104,7 +103,6 @@ struct MainView: View {
                         }
                         .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
-                        .help("Copy Transcript")
                         .disabled(dictation.text.isEmpty)
                     }
                 }
@@ -135,7 +133,6 @@ struct MainView: View {
                             }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
-                            .help("Copy Endpoint")
                         }
                     }
                 } footer: {
@@ -146,13 +143,18 @@ struct MainView: View {
             .formStyle(.grouped)
             .safeAreaBar(edge: .bottom) {
                 HStack {
+                    Button("Replace Model Folder…", systemImage: "folder") { isChoosingModel = true }
+                        .help(service.modelFolder?.path(percentEncoded: false) ?? "")
+                        .disabled(dictation.state == .starting || dictation.state == .recording)
+                        .fileImporter(isPresented: $isChoosingModel, allowedContentTypes: [.folder], onCompletion: useModelFolder)
                     Spacer()
                     #if DEBUG
-                    Button("Clear Model Folder", systemImage: "folder.badge.minus") {
+                    Button {
                         dictation.stop(finalize: false)
                         service.clearModelFolder()
+                    } label: {
+                        Image(systemName: "folder.badge.minus")
                     }
-                    .help("Debug: forget the saved model folder")
                     #endif
                     Button("Hide to Menu Bar", systemImage: "menubar.arrow.up.rectangle") { AppViewModel.shared.hideToMenuBar() }
                         .help("Close this window and keep LocalDictation running in the menu bar")
@@ -160,10 +162,10 @@ struct MainView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
             }
-            .toolbar(removing: .title)
+            .navigationTitle("LocalDictation")
+            .navigationSubtitle(service.state.title)
             .buttonBorderShape(.capsule)
             .toolbar {
-                title
                 ToolbarSpacer(.flexible)
                 ToolbarItemGroup(placement: .automatic) {
                     if service.isRunning {
@@ -177,46 +179,22 @@ struct MainView: View {
                             .help("Load the model and start the endpoint")
                     }
                     Button("Quit", systemImage: "power") { NSApplication.shared.terminate(nil) }
-                        .help("Quit LocalDictation (⌘Q)")
+                        .help("Quit LocalDictation")
                 }
             }
         }
     }
 
-    /// Replaces the window title with a plain, glass-free title and service state; tapping it picks the model
-    /// folder. Hosts the picker for both screens, since the title is on both.
-    private var title: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button {
-                isChoosingModel = true
-            } label: {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("LocalDictation").font(.headline)
-                    Text(service.state.title).font(.subheadline).foregroundStyle(.secondary)
-                }
-            }
-            .buttonStyle(EmptyButtonStyle())
-            .help("Choose Model Folder")
-            .disabled(dictation.state == .starting || dictation.state == .recording)
-            .fileImporter(isPresented: $isChoosingModel, allowedContentTypes: [.folder]) { result in
-                do {
-                    try service.useModelFolder(result.get())
-                } catch {
-                    NSAlert(error: error).runModal()
-                }
-            }
+    /// Picker completion for both screens; a folder failing validation leaves the current model in place.
+    private func useModelFolder(_ result: Result<URL, any Error>) {
+        do {
+            try service.useModelFolder(result.get())
+        } catch {
+            NSAlert(error: error).runModal()
         }
-        .sharedBackgroundVisibility(.hidden)
     }
 
     private var isReady: Bool {
         if case .ready = service.state { true } else { false }
-    }
-}
-
-
-fileprivate struct EmptyButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
     }
 }

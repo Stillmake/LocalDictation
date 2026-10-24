@@ -114,3 +114,7 @@ xcuserdata/
 # Model folders fetched by update-model.sh, chosen in the app at runtime.
 /Qwen3-ASR-*/
 /.model-staging/
+
+# create-dmg.sh output.
+/Archives/
+/*.dmg

@@ -39,7 +39,6 @@ struct HotwordsSheet: View {
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
                             .foregroundStyle(.secondary)
-                            .help("Remove")
                         }
                     }
                 }
