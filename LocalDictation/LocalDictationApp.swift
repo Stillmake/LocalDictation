@@ -200,7 +200,7 @@ final class ASRService {
     }
 
     /// Keeps a folder that still validates, running or not. Otherwise stops the service and adopts the folder
-    /// update-model.sh installs by default, so a user who ran it needs no setup; failing that, the "No Model" screen.
+    /// download-model.sh installs by default, so a user who ran it needs no setup; failing that, the "No Model" screen.
     func refreshModelFolder() {
         guard modelFolder.map({ (try? Transcriber.validate($0)) == nil }) ?? true else { return }
         stop()
