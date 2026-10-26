@@ -196,6 +196,18 @@ final class ASRService {
     init() {
         endpoint = URL(string: "http://127.0.0.1:\(port)/v1")!
         start()
+        refreshModelFolder()
+    }
+
+    /// Keeps a folder that still validates, running or not. Otherwise stops the service and adopts the folder
+    /// update-model.sh installs by default, so a user who ran it needs no setup; failing that, the "No Model" screen.
+    func refreshModelFolder() {
+        guard modelFolder.map({ (try? Transcriber.validate($0)) == nil }) ?? true else { return }
+        stop()
+        let installed = URL.homeDirectory.appending(path: ".local/share/LocalDictation/Qwen3-ASR-0.6B-8bit", directoryHint: .isDirectory)
+        modelFolder = (try? Transcriber.validate(installed)) != nil ? installed : nil
+        UserDefaults.standard.removeObject(forKey: "modelFolder")
+        start()
     }
 
     /// Validates `folder` before adopting it, so a bad pick never replaces a working model; reloads if running.
