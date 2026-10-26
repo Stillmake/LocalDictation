@@ -111,9 +111,10 @@ xcuserdata/
 
 .DS_Store
 
-# Model folders fetched by update-model.sh, chosen in the app at runtime.
+# Model folders kept next to the project, chosen in the app at runtime.
 /Qwen3-ASR-*/
 /.model-staging/
+/.staging-*/
 
 # create-dmg.sh output.
 /Archives/
