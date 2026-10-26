@@ -11,8 +11,8 @@ On-device speech-to-text for macOS, running Qwen3-ASR on MLX, with a local OpenA
    curl -fsSL https://raw.githubusercontent.com/Stillmake/LocalDictation/main/update-model.sh | zsh
    ```
 
-   This saves `mlx-community/Qwen3-ASR-0.6B-8bit` to `~/LocalDictation/Qwen3-ASR-0.6B-8bit`. If the model is already there and complete, the script does nothing. If a download is interrupted, rerun the command and it resumes.
-3. In the app, choose the folder `~/LocalDictation/Qwen3-ASR-0.6B-8bit`.
+   This saves `mlx-community/Qwen3-ASR-0.6B-8bit` to `~/.local/share/LocalDictation/Qwen3-ASR-0.6B-8bit`. If the model is already there and complete, the script does nothing. If a download is interrupted, rerun the command and it resumes.
+3. In the app, choose the folder `~/.local/share/LocalDictation/Qwen3-ASR-0.6B-8bit`.
 
 To download another model, pass its repo name. To save somewhere else, set `LOCALDICTATION_DIR`:
 

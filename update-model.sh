@@ -1,5 +1,5 @@
 #!/bin/zsh
-# Downloads an MLX repo from ModelScope into ~/LocalDictation with aria2c; pick that folder in the app.
+# Downloads an MLX repo from ModelScope into ~/.local/share/LocalDictation with aria2c; pick that folder in the app.
 #
 #   curl -fsSL https://raw.githubusercontent.com/Stillmake/LocalDictation/main/update-model.sh | zsh
 #   curl -fsSL https://raw.githubusercontent.com/Stillmake/LocalDictation/main/update-model.sh | zsh -s -- mlx-community/Qwen3-ASR-0.6B-4bit
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 repo=${1:-mlx-community/Qwen3-ASR-0.6B-8bit}
-root=${LOCALDICTATION_DIR:-$HOME/LocalDictation}
+root=${LOCALDICTATION_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/LocalDictation}
 target="$root/${repo:t}"
 staging="$root/.staging-${repo:t}"
 
