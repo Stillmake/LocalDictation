@@ -110,7 +110,8 @@ final class LiveDictation {
                 }
                 let silence: Float = 0.012
                 let paused = frames.count >= 6 && frames.suffix(6).allSatisfy { $0 < silence }
-                let hasSpeech = frames.contains { $0 >= silence }
+                // Hex’s conservative 30 ms DC-removed silence gate preserves quiet speech.
+                let hasSpeech = Self.hasAudibleSignal(segment)
                 let finalize = !recording || (duration >= 2.5 && paused) || duration >= 20
 
                 if finalize && !hasSpeech {
@@ -142,6 +143,16 @@ final class LiveDictation {
                 if !recording { break }
             }
             level = 0
+        }
+    }
+
+    /// Adapted from Hex's silence gate (MIT, Christopher Langton): reject only near-silence.
+    private nonisolated static func hasAudibleSignal(_ samples: [Float]) -> Bool {
+        stride(from: 0, to: samples.count, by: 480).contains { offset in
+            let window = samples[offset..<min(offset + 480, samples.count)]
+            let mean = window.reduce(0.0) { $0 + Double($1) } / Double(window.count)
+            let variance = window.reduce(0.0) { $0 + pow(Double($1) - mean, 2) } / Double(window.count)
+            return sqrt(variance) >= pow(10.0, -50.0 / 20.0)
         }
     }
 

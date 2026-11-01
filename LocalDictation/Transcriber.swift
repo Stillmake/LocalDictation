@@ -39,7 +39,7 @@ actor Transcriber {
 
     /// `hotwords` lands in the system-prompt context slot, biasing decoding toward those terms.
     func transcribe(_ audioURL: URL, language: String?, hotwords: String?) throws -> Qwen3ASRModel.Output {
-        guard let model else { throw NotReady() }
+        guard model != nil else { throw NotReady() }
 
         // Decode any AVAudioFile format and resample + downmix to 16 kHz mono Float32 in one conversion.
         let file = try AVAudioFile(forReading: audioURL)
