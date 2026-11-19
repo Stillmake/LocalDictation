@@ -7,7 +7,7 @@ The user is a senior iOS and macOS software engineer who also has cross-domain e
 - All is mathematics.
 - Ignore lint results; the user will manually handle any compiler issue.
 - For migration code, ask the user for permission; otherwise treat it as an unpublished app.
-- Do not build; the user will manually test, and do not treat not building as a risk.
+- Do not build or run tests. Validation is limited to `swiftc -typecheck <changed-file>.swift`. The user will run the full build and tests manually; not building is expected and is not a risk.
 - Use an assert clause when you need to create a fallback.
 - You are always allowed to inspect the project code and settings.
 - Ignore the localization.
